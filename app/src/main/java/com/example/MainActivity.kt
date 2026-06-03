@@ -119,6 +119,23 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.background)
                     ) {
+                        // Global hidden PreviewView to keep the camera bound to MainActivity's lifecycle
+                        if (hasCameraPermission) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    androidx.camera.view.PreviewView(ctx).apply {
+                                        implementationMode = androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(1.dp)
+                                    .alpha(0.01f),
+                                update = { previewView ->
+                                    cameraHelper.bindCamera(this@MainActivity, previewView.surfaceProvider)
+                                }
+                            )
+                        }
+
                         when (currentScreen) {
                             AppScreen.TRAP -> {
                                 TrapScreen(
@@ -171,19 +188,8 @@ fun TrapScreen(
 ) {
     val context = LocalContext.current
     val trapState by viewModel.trapState.collectAsStateWithLifecycle()
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-
-    // Bind CameraX on Trap start
-    var isCameraBound by remember { mutableStateOf(false) }
-    var surfaceProvider by remember { mutableStateOf<androidx.camera.core.Preview.SurfaceProvider?>(null) }
-
-    LaunchedEffect(hasPermission, surfaceProvider) {
-        if (hasPermission && surfaceProvider != null) {
-            cameraHelper.bindCamera(lifecycleOwner, surfaceProvider) {
-                isCameraBound = true
-            }
-        }
-    }
+    val baitSender by viewModel.baitSender.collectAsStateWithLifecycle()
+    val baitMessage by viewModel.baitMessage.collectAsStateWithLifecycle()
 
     val launcherApps = remember {
         listOf(
@@ -220,24 +226,6 @@ fun TrapScreen(
                 )
             )
     ) {
-        // Invisible 1dp SurfaceProvider for robust camera focus/exposure stabilization
-        AndroidView(
-            factory = { ctx ->
-                androidx.camera.view.PreviewView(ctx).apply {
-                    implementationMode = androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
-                }
-            },
-            modifier = Modifier
-                .size(1.dp)
-                .alpha(0.01f)
-                .align(Alignment.TopStart),
-            update = { previewView ->
-                if (surfaceProvider == null) {
-                    surfaceProvider = previewView.surfaceProvider
-                }
-            }
-        )
-
         // Desktop Layout
         Column(
             modifier = Modifier
@@ -290,7 +278,11 @@ fun TrapScreen(
             Spacer(modifier = Modifier.height(28.dp))
 
             // Fake temptative Messenger Notification banner (Highly tempting bait widget!)
-            FakeNotificationBait(onTap = { triggerAction("Messenger Banner") })
+            FakeNotificationBait(
+                sender = baitSender,
+                message = baitMessage,
+                onTap = { triggerAction("Messenger ($baitSender)") }
+            )
 
             Spacer(modifier = Modifier.height(32.dp))
 
@@ -473,7 +465,11 @@ fun CenteredClockWidget() {
 }
 
 @Composable
-fun FakeNotificationBait(onTap: () -> Unit) {
+fun FakeNotificationBait(
+    sender: String,
+    message: String,
+    onTap: () -> Unit
+) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.08f)),
@@ -518,7 +514,7 @@ fun FakeNotificationBait(onTap: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Messenger • Sarah",
+                        text = "Messenger • $sender",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
@@ -531,7 +527,7 @@ fun FakeNotificationBait(onTap: () -> Unit) {
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Hey! Is this your phone? I left my keys at your place...",
+                    text = message,
                     color = Color.White.copy(alpha = 0.85f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -597,6 +593,12 @@ fun DashboardScreen(
 ) {
     val context = LocalContext.current
     val logs by viewModel.allLogs.collectAsStateWithLifecycle()
+    val baitSender by viewModel.baitSender.collectAsStateWithLifecycle()
+    val baitMessage by viewModel.baitMessage.collectAsStateWithLifecycle()
+
+    var senderInput by remember(baitSender) { mutableStateOf(baitSender) }
+    var messageInput by remember(baitMessage) { mutableStateOf(baitMessage) }
+
     var previewPhotoPath by remember { mutableStateOf<String?>(null) }
     var isTestCapturing by remember { mutableStateOf(false) }
 
@@ -604,193 +606,327 @@ fun DashboardScreen(
         modifier = modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Dashboard Title Banner
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "PhoneGuard",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Owner Dashboard & Security Log",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                IconButton(
-                    onClick = { viewModel.setScreen(AppScreen.TRAP) },
-                    modifier = Modifier
-                        .background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
-                        .size(44.dp)
+            // 1. Title Banner
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Arm System",
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
+                    Column {
+                        Text(
+                            text = "PhoneGuard",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Owner Dashboard & Security Log",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Info Card & Gestures Manual
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "SYSTEM STATUS: ACTIVE & ARMED",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "How to use PhoneGuard:\n" +
-                                "1. Tap the Lock button above to arms the immersive Trap screen.\n" +
-                                "2. Snoopers will see a realistic launcher. Tapping ANY app triggers camera capture.\n" +
-                                "3. TRIPLE-TAP the bottom empty area of the wallpaper to return to this dashboard.\n",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 18.sp
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Live quick trigger actions
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Primary Action Button to Arm Trap
-                Button(
-                    onClick = { viewModel.setScreen(AppScreen.TRAP) },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Arm Safe Trap")
-                }
-
-                // Quick photo-test trigger
-                OutlinedButton(
-                    onClick = {
-                        if (!hasPermission) {
-                            Toast.makeText(context, "Camera permission needed!", Toast.LENGTH_SHORT).show()
-                        } else {
-                            isTestCapturing = true
-                            cameraHelper.takePhoto(
-                                onSuccess = { path ->
-                                    isTestCapturing = false
-                                    viewModel.triggerTrap("Dashboard QuickTest") { onSuccess, _ ->
-                                        onSuccess(path)
-                                    }
-                                    Toast.makeText(context, "Test image saved successfully!", Toast.LENGTH_SHORT).show()
-                                },
-                                onError = { _ ->
-                                    isTestCapturing = false
-                                    Toast.makeText(context, "Test camera capture failed.", Toast.LENGTH_SHORT).show()
-                                }
-                            )
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f),
-                    enabled = !isTestCapturing
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (isTestCapturing) "Snapping..." else "Test Capture")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Logs Segment title
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Intruder Logs (${logs.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-
-                if (logs.isNotEmpty()) {
-                    TextButton(
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        onClick = { viewModel.clearAllLogs() }
+                    IconButton(
+                        onClick = { viewModel.setScreen(AppScreen.TRAP) },
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
+                            .size(44.dp)
                     ) {
-                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Clear All")
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Arm System",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     }
                 }
             }
 
-            // Scrollable Logs list
-            if (logs.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
+            // 2. Info Status Card
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(16.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "All Clear",
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                            modifier = Modifier.size(64.dp)
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "SYSTEM STATUS: ACTIVE & ARMED",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "How to use PhoneGuard:\n" +
+                                    "1. Tap the Lock button above to arm the immersive Trap screen.\n" +
+                                    "2. Snoopers will see a realistic launcher. Tapping ANY app triggers camera capture.\n" +
+                                    "3. TRIPLE-TAP the bottom empty area of the wallpaper to return to this dashboard.\n",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+
+            // 3. Quick Trigger Actions Row
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = { viewModel.setScreen(AppScreen.TRAP) },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Arm Safe Trap")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (!hasPermission) {
+                                Toast.makeText(context, "Camera permission needed!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                isTestCapturing = true
+                                cameraHelper.takePhoto(
+                                    onSuccess = { path ->
+                                        isTestCapturing = false
+                                        viewModel.insertLog("Dashboard QuickTest", path)
+                                        Toast.makeText(context, "Test image saved successfully!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    onError = { _ ->
+                                        isTestCapturing = false
+                                        Toast.makeText(context, "Test camera capture failed.", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                        enabled = !isTestCapturing
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (isTestCapturing) "Snapping..." else "Test Capture")
+                    }
+                }
+            }
+
+            // 4. Bait Customization Card
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "MESSENGER BAIT CUSTOMIZATION",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = senderInput,
+                            onValueChange = { senderInput = it },
+                            label = { Text("Sender Name") },
+                            placeholder = { Text("Sarah") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = messageInput,
+                            onValueChange = { messageInput = it },
+                            label = { Text("Bait Message") },
+                            placeholder = { Text("Hey! Is this your phone?...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
                         Text(
-                            text = "No intruder attempts logged.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
+                            text = "Live Preview:",
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text(
-                            text = "Your phone is guarded and completely safe.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.inverseOnSurface),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF0084FF)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Email,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "Messenger • ${senderInput.ifBlank { "Sarah" }}",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "now",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                    Text(
+                                        text = messageInput.ifBlank { "Hey! Is this your phone? I left my keys at your place..." },
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    val defaultSender = "Sarah"
+                                    val defaultMsg = "Hey! Is this your phone? I left my keys at your place..."
+                                    senderInput = defaultSender
+                                    messageInput = defaultMsg
+                                    viewModel.updateBait(defaultSender, defaultMsg)
+                                    Toast.makeText(context, "Reset to default bait profile!", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Text("Reset Defaults")
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Button(
+                                onClick = {
+                                    viewModel.updateBait(
+                                        senderInput.ifBlank { "Sarah" },
+                                        messageInput.ifBlank { "Hey! Is this your phone? I left my keys at your place..." }
+                                    )
+                                    Toast.makeText(context, "Bait configuration updated!", Toast.LENGTH_SHORT).show()
+                                },
+                                enabled = senderInput.isNotBlank() && messageInput.isNotBlank()
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Apply")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 5. Logs Segment Title
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Intruder Logs (${logs.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+
+                    if (logs.isNotEmpty()) {
+                        TextButton(
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            onClick = { viewModel.clearAllLogs() }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Clear All")
+                        }
+                    }
+                }
+            }
+
+            // 6. Logs Data List
+            if (logs.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "All Clear",
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                modifier = Modifier.size(64.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "No intruder attempts logged.",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Your phone is guarded and completely safe.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(logs) { log ->
-                        IntruderLogItem(
-                            log = log,
-                            onPhotoTap = { previewPhotoPath = log.filePath },
-                            onDelete = { viewModel.deleteLog(log) }
-                        )
-                    }
+                items(logs) { log ->
+                    IntruderLogItem(
+                        log = log,
+                        onPhotoTap = { previewPhotoPath = log.filePath },
+                        onDelete = { viewModel.deleteLog(log) }
+                    )
                 }
             }
         }

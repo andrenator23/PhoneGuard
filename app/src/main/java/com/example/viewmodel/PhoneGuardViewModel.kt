@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
@@ -25,10 +26,29 @@ data class TrapUiState(
 class PhoneGuardViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: IntruderRepository
+    private val prefs = application.getSharedPreferences("PhoneGuardPrefs", Context.MODE_PRIVATE)
+
+    private val _baitSender = MutableStateFlow(prefs.getString("bait_sender", "Sarah") ?: "Sarah")
+    val baitSender: StateFlow<String> = _baitSender.asStateFlow()
+
+    private val _baitMessage = MutableStateFlow(
+        prefs.getString("bait_message", "Hey! Is this your phone? I left my keys at your place...") 
+            ?: "Hey! Is this your phone? I left my keys at your place..."
+    )
+    val baitMessage: StateFlow<String> = _baitMessage.asStateFlow()
 
     init {
         val database = AppDatabase.getDatabase(application)
         repository = IntruderRepository(database.intruderDao())
+    }
+
+    fun updateBait(sender: String, message: String) {
+        _baitSender.value = sender
+        _baitMessage.value = message
+        prefs.edit()
+            .putString("bait_sender", sender)
+            .putString("bait_message", message)
+            .apply()
     }
 
     val allLogs: StateFlow<List<IntruderLog>> = repository.allLogs
@@ -103,6 +123,16 @@ class PhoneGuardViewModel(application: Application) : AndroidViewModel(applicati
     fun clearAllLogs() {
         viewModelScope.launch {
             repository.clearAllLogs(allLogs.value)
+        }
+    }
+
+    fun insertLog(triggeredAppName: String, filePath: String) {
+        viewModelScope.launch {
+            val log = IntruderLog(
+                filePath = filePath,
+                triggeredApp = triggeredAppName
+            )
+            repository.insertLog(log)
         }
     }
 }

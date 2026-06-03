@@ -17,12 +17,20 @@ class CameraHelper(private val context: Context) {
 
     private var imageCapture: ImageCapture? = null
     private var cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var isBound = false
+    private var isCapturing = false
 
     fun bindCamera(
         lifecycleOwner: LifecycleOwner,
         surfaceProvider: Preview.SurfaceProvider? = null,
         onInitialized: () -> Unit = {}
     ) {
+        if (isBound) {
+            Log.d("CameraHelper", "Camera already bound. Skipping rebinding.")
+            onInitialized()
+            return
+        }
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             try {
@@ -48,6 +56,7 @@ class CameraHelper(private val context: Context) {
                     imageCapture
                 )
                 
+                isBound = true
                 onInitialized()
                 Log.d("CameraHelper", "Camera successfully bound to lifecycle.")
             } catch (e: Exception) {
@@ -60,12 +69,21 @@ class CameraHelper(private val context: Context) {
         onSuccess: (filePath: String) -> Unit,
         onError: (exception: Exception) -> Unit
     ) {
+        if (isCapturing) {
+            val err = Exception("A photo capture is already in progress")
+            Log.w("CameraHelper", "Capture ignored: capture already in progress")
+            onError(err)
+            return
+        }
+
         val capture = imageCapture ?: run {
             val err = Exception("Camera not bound or initialized")
             Log.e("CameraHelper", "Capture failed: Camera not bound", err)
             onError(err)
             return
         }
+
+        isCapturing = true
 
         val outputDir = File(context.filesDir, "intruders").apply {
             if (!exists()) {
@@ -81,12 +99,14 @@ class CameraHelper(private val context: Context) {
             cameraExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    isCapturing = false
                     val path = photoFile.absolutePath
                     Log.d("CameraHelper", "Photo save success: $path")
                     onSuccess(path)
                 }
 
                 override fun onError(exception: ImageCaptureException) {
+                    isCapturing = false
                     Log.e("CameraHelper", "Photo capture failed: ${exception.message}", exception)
                     onError(exception)
                 }
