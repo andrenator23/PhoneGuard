@@ -1,0 +1,6 @@
+{
+  "name": "PhoneGuard",
+  "description": "An immersive fake home screen that helps you catch unauthorized phone snoopers by taking silent photos of them using the front camera when they tap on any icon.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
