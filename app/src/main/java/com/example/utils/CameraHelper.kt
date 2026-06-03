@@ -18,6 +18,7 @@ class CameraHelper(private val context: Context) {
     private var imageCapture: ImageCapture? = null
     private var cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var isBound = false
+    private var isBinding = false
     private var isCapturing = false
 
     fun bindCamera(
@@ -25,12 +26,15 @@ class CameraHelper(private val context: Context) {
         surfaceProvider: Preview.SurfaceProvider? = null,
         onInitialized: () -> Unit = {}
     ) {
-        if (isBound) {
-            Log.d("CameraHelper", "Camera already bound. Skipping rebinding.")
-            onInitialized()
+        if (isBound || isBinding) {
+            Log.d("CameraHelper", "Camera already bound or binding in progress. Skipping.")
+            if (isBound) {
+                onInitialized()
+            }
             return
         }
 
+        isBinding = true
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             try {
@@ -45,7 +49,15 @@ class CameraHelper(private val context: Context) {
                     .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                     .build()
 
-                val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+                var cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+                if (!cameraProvider.hasCamera(cameraSelector)) {
+                    if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                        cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                        Log.d("CameraHelper", "Front camera not found. Falling back to back camera.")
+                    } else {
+                        Log.w("CameraHelper", "Neither front nor back camera is available on this device.")
+                    }
+                }
 
                 cameraProvider.unbindAll()
 
@@ -61,6 +73,8 @@ class CameraHelper(private val context: Context) {
                 Log.d("CameraHelper", "Camera successfully bound to lifecycle.")
             } catch (e: Exception) {
                 Log.e("CameraHelper", "Use case binding failed", e)
+            } finally {
+                isBinding = false
             }
         }, ContextCompat.getMainExecutor(context))
     }

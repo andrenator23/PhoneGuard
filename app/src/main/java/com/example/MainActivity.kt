@@ -125,14 +125,11 @@ class MainActivity : ComponentActivity() {
                                 factory = { ctx ->
                                     androidx.camera.view.PreviewView(ctx).apply {
                                         implementationMode = androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
+                                        // Bind inside factory once to completely avoid race conditions and background permissions limits
+                                        cameraHelper.bindCamera(this@MainActivity, this.surfaceProvider)
                                     }
                                 },
-                                modifier = Modifier
-                                    .size(1.dp)
-                                    .alpha(0.01f),
-                                update = { previewView ->
-                                    cameraHelper.bindCamera(this@MainActivity, previewView.surfaceProvider)
-                                }
+                                modifier = Modifier.fillMaxSize()
                             )
                         }
 
