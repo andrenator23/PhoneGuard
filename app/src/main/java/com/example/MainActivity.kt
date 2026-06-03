@@ -238,33 +238,6 @@ fun TrapScreen(
             }
         )
 
-        // Triple-Tap Invisible Guard Area at the bottom of the wallpaper to exit
-        var tapCount by remember { mutableStateOf(0) }
-        var lastTapTime by remember { mutableStateOf(0L) }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(110.dp)
-                .align(Alignment.BottomCenter)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    val now = System.currentTimeMillis()
-                    if (now - lastTapTime < 500) {
-                        tapCount++
-                    } else {
-                        tapCount = 1
-                    }
-                    lastTapTime = now
-                    if (tapCount >= 3) {
-                        tapCount = 0
-                        viewModel.setScreen(AppScreen.DASHBOARD)
-                    }
-                }
-        )
-
         // Desktop Layout
         Column(
             modifier = Modifier
@@ -375,6 +348,33 @@ fun TrapScreen(
                     .background(Color.White.copy(alpha = 0.4f))
             )
         }
+
+        // Triple-Tap Invisible Guard Area at the bottom of the wallpaper to exit
+        var tapCount by remember { mutableStateOf(0) }
+        var lastTapTime by remember { mutableStateOf(0L) }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(110.dp)
+                .align(Alignment.BottomCenter)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastTapTime < 500) {
+                        tapCount++
+                    } else {
+                        tapCount = 1
+                    }
+                    lastTapTime = now
+                    if (tapCount >= 3) {
+                        tapCount = 0
+                        viewModel.setScreen(AppScreen.DASHBOARD)
+                    }
+                }
+        )
 
         // Overlays when trap triggers
         if (trapState.showFakeLoading) {
